@@ -1,0 +1,52 @@
+# Ignore environment files
+.env
+*.env
+
+# Ignore Python virtual environments
+venv/
+*/venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*/python/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Unit test / coverage reports
+.coverage
+.pytest_cache/
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# API Keys and secrets
+secrets.json
+
+# Ignore Python directory
+python/
+python/*

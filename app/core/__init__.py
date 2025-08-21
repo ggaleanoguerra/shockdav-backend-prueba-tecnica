@@ -1,0 +1,3 @@
+"""
+Configuración y utilidades centrales.
+"""

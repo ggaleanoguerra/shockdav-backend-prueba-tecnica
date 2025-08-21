@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+boto3
+python-dotenv
+sqlalchemy
+pymysql
+cryptography
+requests

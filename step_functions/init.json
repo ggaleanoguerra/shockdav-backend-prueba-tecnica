@@ -1,0 +1,116 @@
+{
+  "Comment": "Orquestación Bitget - Alternativa con Pass State",
+  "StartAt": "DivideSymbols",
+  "States": {
+    "DivideSymbols": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-2:761018882913:function:symbol-divider",
+      "Comment": "Lambda que divide los símbolos en lotes para procesamiento paralelo",
+      "ResultPath": "$.batches",
+      "Next": "PrepareForParallel"
+    },
+    "PrepareForParallel": {
+      "Type": "Pass",
+      "Comment": "Preparar input para el Parallel state",
+      "Parameters": {
+        "batch1.$": "$.batches.batch1",
+        "batch2.$": "$.batches.batch2",
+        "batch3.$": "$.batches.batch3"
+      },
+      "Next": "ProcessBatchesInParallel"
+    },
+    "ProcessBatchesInParallel": {
+      "Type": "Parallel",
+      "Comment": "Procesar lotes de símbolos en paralelo - Visualmente paralelo",
+      "Branches": [
+        {
+          "StartAt": "ProcessBatch1",
+          "States": {
+            "ProcessBatch1": {
+              "Type": "Map",
+              "ItemsPath": "$.batch1",
+              "MaxConcurrency": 3,
+              "Iterator": {
+                "StartAt": "WorkerLambda1",
+                "States": {
+                  "WorkerLambda1": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:lambda:us-east-2:761018882913:function:bitget-worker",
+                    "End": true
+                  }
+                }
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "ProcessBatch2",
+          "States": {
+            "ProcessBatch2": {
+              "Type": "Map",
+              "ItemsPath": "$.batch2",
+              "MaxConcurrency": 3,
+              "Iterator": {
+                "StartAt": "WorkerLambda2",
+                "States": {
+                  "WorkerLambda2": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:lambda:us-east-2:761018882913:function:bitget-worker",
+                    "End": true
+                  }
+                }
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "ProcessBatch3",
+          "States": {
+            "ProcessBatch3": {
+              "Type": "Map",
+              "ItemsPath": "$.batch3",
+              "MaxConcurrency": 3,
+              "Iterator": {
+                "StartAt": "WorkerLambda3",
+                "States": {
+                  "WorkerLambda3": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:lambda:us-east-2:761018882913:function:bitget-worker",
+                    "End": true
+                  }
+                }
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.parallelResults",
+      "Next": "MergeResults"
+    },
+    "MergeResults": {
+      "Type": "Pass",
+      "Comment": "Combinar resultados de todas las ramas paralelas",
+      "Parameters": {
+        "perSymbolResults.$": "States.Array($.parallelResults[0], $.parallelResults[1], $.parallelResults[2])"
+      },
+      "Next": "FlattenArray"
+    },
+    "FlattenArray": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-2:761018882913:function:array-flattener",
+      "Comment": "Lambda que aplana el array de resultados",
+      "InputPath": "$.perSymbolResults",
+      "ResultPath": "$.perSymbolResults",
+      "Next": "Aggregate"
+    },
+    "Aggregate": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-2:761018882913:function:bitget-aggregator",
+      "InputPath": "$.perSymbolResults",
+      "End": true
+    }
+  }
+}
