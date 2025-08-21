@@ -5,7 +5,7 @@ import boto3
 from datetime import datetime
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
-from app.models.database import ExecutionResult, Order, ProcessingLog, get_db_session, create_tables
+from app.models.database import ExecutionResult, Order, ProcessingLog, get_db_session, create_tables, get_bogota_now
 import logging
 
 # Configurar logging
@@ -87,7 +87,7 @@ class DatabaseService:
                 execution_result.total_orders = result.get("total_orders")
                 execution_result.s3_uri = result.get("s3_uri")
                 execution_result.public_url = result.get("public_url")
-                execution_result.updated_at = datetime.utcnow()
+                execution_result.updated_at = get_bogota_now()
             else:
                 # Crear nuevo registro
                 execution_result = ExecutionResult(

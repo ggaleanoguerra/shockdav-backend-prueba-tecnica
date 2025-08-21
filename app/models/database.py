@@ -2,8 +2,16 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, BigInteger, Floa
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from app.core.config import config
+
+# Zona horaria de Bogotá: UTC-5
+BOGOTA_TIMEZONE = timezone(timedelta(hours=-5))
+
+def get_bogota_now():
+    """Obtiene la fecha y hora actual en zona horaria de Bogotá (UTC-5)"""
+    utc_now = datetime.now(timezone.utc)
+    return utc_now.astimezone(BOGOTA_TIMEZONE).replace(tzinfo=None)  # Sin tzinfo para compatibilidad con MySQL
 
 Base = declarative_base()
 
@@ -20,8 +28,8 @@ class ExecutionResult(Base):
     public_url = Column(Text)
     result_data = Column(Text)  # JSON string
     processing_time_seconds = Column(Float)  # Tiempo de procesamiento
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_bogota_now)
+    updated_at = Column(DateTime, default=get_bogota_now, onupdate=get_bogota_now)
 
 class Order(Base):
     """Tabla para almacenar las órdenes de trading"""
@@ -75,7 +83,7 @@ class Order(Base):
     u_time = Column(BigInteger)  # Update time
     
     # Timestamp de registro en nuestra BD
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_bogota_now)
 
 class ProcessingLog(Base):
     """Tabla para logs de procesamiento"""
@@ -86,7 +94,7 @@ class ProcessingLog(Base):
     level = Column(String(20), nullable=False)  # INFO, ERROR, WARNING
     message = Column(Text, nullable=False)
     details = Column(Text)  # JSON string con detalles adicionales
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_bogota_now)
 
 # Configuración de la base de datos
 DATABASE_URL = config.DATABASE_URL
