@@ -10,6 +10,7 @@ RESULTS_BUCKET = os.environ.get("RESULTS_BUCKET")                              #
 RESULTS_PREFIX = os.environ.get("RESULTS_PREFIX", "bitget-results/").lstrip("/")
 RESPONSE_MAX_ORDERS = int(os.environ.get("RESPONSE_MAX_ORDERS", "0"))
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-2"
+CLEANUP_PER_SYMBOL_FILES = os.environ.get("CLEANUP_PER_SYMBOL_FILES", "true").lower() == "true"
 
 MAX_RESPONSE_SIZE_KB = int(os.environ.get("MAX_RESPONSE_SIZE_KB", "220"))      # Límite en KB para respuestas
 
@@ -21,42 +22,23 @@ def _as_int(x: Any, default: int = 0) -> int:
 
 def _order_time_safe(o: Any) -> int:
     """
-    Devuelve el timestamp para ordenar.
-    Acepta dicts con uTime/cTime/updateTime/createTime (str o int). Si no es dict, 0.
+    Extrae timestamp de una orden para ordenamiento.
+    Si no se puede parsear, retorna 0 para que quede al final.
     """
-    if isinstance(o, dict):
-        return _as_int(
-            o.get("uTime")
-            or o.get("cTime")
-            or o.get("updateTime")
-            or o.get("createTime")
-            or 0,
-            0
-        )
-    return 0
-
-def _results_key(now: datetime, suffix: str = "json") -> str:
-    # key como YYYY/MM/DD/HH-mm-ssZ.json bajo RESULTS_PREFIX
-    prefix = RESULTS_PREFIX if RESULTS_PREFIX.endswith("/") else RESULTS_PREFIX + "/"
-    return f"{prefix}{now.strftime('%Y/%m/%d/%H-%M-%SZ')}.{suffix}"
+    if not isinstance(o, dict):
+        return 0
+    ts = o.get("orderTime") or o.get("timestamp") or o.get("time")
+    return _as_int(ts, 0)
 
 def _categorize_error(error_msg: str) -> Dict[str, str]:
     """
-    Categoriza y limpia los mensajes de error para mejor presentación.
-    Retorna también el mensaje original para debugging.
+    Categoriza errores para conteo sin incluir listas extensas.
     """
-    if not error_msg:
-        return {"category": "unknown", "message": "Unknown error", "original": ""}
-    
     error_lower = error_msg.lower()
     
-    # Errores de símbolo no existente
-    if "does not exist" in error_lower:
-        return {"category": "symbol_not_found", "message": error_msg, "original": error_msg}
-    
-    # Errores de autenticación
-    if "authentication failed" in error_lower or "api credentials" in error_lower:
-        return {"category": "auth_error", "message": "Authentication failed - check API credentials", "original": error_msg}
+    # Errores de API inválida
+    if "invalid" in error_lower or "not found" in error_lower or "bad request" in error_lower:
+        return {"category": "invalid_request", "message": "Invalid API request or symbol not found", "original": error_msg}
     
     # Errores de permisos
     if "access forbidden" in error_lower or "permissions" in error_lower:
@@ -85,6 +67,63 @@ def _categorize_error(error_msg: str) -> Dict[str, str]:
     # Error genérico - capturar mensaje completo
     return {"category": "api_error", "message": error_msg, "original": error_msg}
 
+def _delete_per_symbol_files(per_symbol_keys: List[str]) -> Dict[str, Any]:
+    """
+    Elimina los archivos per-symbol de S3 después de crear el archivo agregado.
+    
+    Args:
+        per_symbol_keys: Lista de keys de S3 a eliminar
+        
+    Returns:
+        Diccionario con estadísticas de la eliminación
+    """
+    if not RESULTS_BUCKET or not CLEANUP_PER_SYMBOL_FILES or not per_symbol_keys:
+        return {"cleaned": False, "reason": "cleanup disabled or no files to clean"}
+    
+    deleted_count = 0
+    failed_deletions = []
+    
+    try:
+        # Eliminar archivos en lotes para eficiencia
+        for key in per_symbol_keys:
+            if not key:  # Skip empty keys
+                continue
+                
+            try:
+                print(f"Deleting per-symbol file: s3://{RESULTS_BUCKET}/{key}")
+                S3.delete_object(Bucket=RESULTS_BUCKET, Key=key)
+                deleted_count += 1
+            except Exception as e:
+                failed_deletions.append({"key": key, "error": str(e)})
+                print(f"Failed to delete {key}: {str(e)}")
+    
+    except Exception as e:
+        return {
+            "cleaned": False, 
+            "error": f"Cleanup process failed: {str(e)}",
+            "deleted_count": deleted_count,
+            "failed_deletions": failed_deletions
+        }
+    
+    cleanup_result = {
+        "cleaned": True,
+        "deleted_count": deleted_count,
+        "total_requested": len(per_symbol_keys),
+        "success_rate": f"{(deleted_count/len(per_symbol_keys)*100):.1f}%" if per_symbol_keys else "0%"
+    }
+    
+    if failed_deletions:
+        cleanup_result["failed_deletions"] = failed_deletions
+        cleanup_result["some_failures"] = True
+    
+    print(f"✅ Cleanup completed: {deleted_count}/{len(per_symbol_keys)} files deleted")
+    return cleanup_result
+
+def _results_key(now: datetime, suffix: str = "json") -> str:
+    # key como YYYY/MM/DD/HH-mm-ssZ.json bajo RESULTS_PREFIX
+    prefix = RESULTS_PREFIX if RESULTS_PREFIX.endswith("/") else RESULTS_PREFIX + "/"
+    return f"{prefix}{now.strftime('%Y/%m/%d/%H-%M-%SZ')}.{suffix}"
+
 def _get_json_from_s3(bucket: str, key: str) -> Dict[str, Any]:
     obj = S3.get_object(Bucket=bucket, Key=key)
     return json.loads(obj["Body"].read())
@@ -112,6 +151,7 @@ def handler(event, context):
     errors: List[Dict[str, Optional[str]]] = []
     total_symbols_processed = 0
     total_symbols_with_data = 0
+    per_symbol_keys_to_delete: List[str] = []  # Track per-symbol files for cleanup
 
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
@@ -143,6 +183,8 @@ def handler(event, context):
                 orders = data.get("orders")
                 if orders:
                     print(f"Loaded {len(orders)} orders for {sym} from S3")
+                    # Track this S3 key for potential cleanup
+                    per_symbol_keys_to_delete.append(key)
             except Exception as e:
                 error_info = _categorize_error(f"Failed to read from S3: {str(e)}")
                 errors.append({
@@ -151,16 +193,15 @@ def handler(event, context):
                     "category": error_info["category"]
                 })
 
-        # Fallback legacy: leer órdenes inline
-        if orders is None:
+        # Fallback a orders inline (legacy)
+        if not orders and item.get("orders"):
             orders = item.get("orders")
-            if orders:
-                print(f"Using inline orders for {sym}: {len(orders)} orders")
+            print(f"Using inline orders for {sym}: {len(orders) if orders else 0} orders")
 
-        # Validar y procesar órdenes
-        if not isinstance(orders, list):
-            if orders is not None:
-                error_info = _categorize_error(f"Invalid orders data type: {type(orders).__name__}")
+        # Si no hay orders de ninguna forma, skip
+        if not orders:
+            if sym:  # Solo contar símbolos conocidos
+                error_info = _categorize_error("No orders data available")
                 errors.append({
                     "symbol": sym, 
                     "error": error_info.get("original", error_info["message"]),
@@ -197,33 +238,30 @@ def handler(event, context):
     
     for error in errors:
         category = error.get("category", "unknown")
-        symbol = error.get("symbol", "unknown")
-        error_message = error.get("error", "Unknown error")
-        
-        # Conteo por categoría
         if category not in error_summary:
-            error_summary[category] = {"count": 0}
-        error_summary[category]["count"] += 1
+            error_summary[category] = 0
+            error_details[category] = {"count": 0, "examples": []}
         
-        # Detalles por categoría
-        if category not in error_details:
-            error_details[category] = []
-        error_details[category].append({
-            "symbol": symbol,
-            "error": error_message
-        })
+        error_summary[category] += 1
+        error_details[category]["count"] += 1
+        
+        # Solo agregar algunos ejemplos para evitar respuestas enormes
+        if len(error_details[category]["examples"]) < 3:
+            error_details[category]["examples"].append({
+                "symbol": error.get("symbol"),
+                "message": error.get("error", "Unknown error")[:200]  # Truncar mensajes largos
+            })
 
-    # Calcular tiempo de procesamiento del agregador
+    # Timing del agregador
     aggregator_end_time = datetime.now(timezone.utc)
     aggregator_duration_seconds = (aggregator_end_time - aggregator_start_time).total_seconds()
-    
-    print(f"Aggregator completed in {aggregator_duration_seconds:.3f} seconds")
 
-    # Resumen base (con lista detallada de errores)
-    final_summary: Dict[str, Any] = {
-        "total_symbols_processed": total_symbols_processed,
-        "total_symbols_with_data": total_symbols_with_data,
+    # Crear resumen final (sin órdenes para optimización)
+    final_summary = {
         "total_orders": len(all_orders),
+        "symbols_processed": total_symbols_processed,
+        "symbols_with_data": total_symbols_with_data,
+        "error_count": len(errors),
         "error_summary": error_summary,
         "error_details": error_details,
         "processing_timestamp": aggregator_end_time.isoformat(),
@@ -256,6 +294,19 @@ def handler(event, context):
             final_summary["s3_uri"] = f"s3://{RESULTS_BUCKET}/{key}"
             final_summary["public_url"] = f"https://{RESULTS_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
             print(f"Results stored successfully in S3")
+            
+            if per_symbol_keys_to_delete:
+                print(f"�� Starting cleanup of {len(per_symbol_keys_to_delete)} per-symbol files...")
+                cleanup_result = _delete_per_symbol_files(per_symbol_keys_to_delete)
+                final_summary["cleanup"] = cleanup_result
+                
+                if cleanup_result.get("cleaned"):
+                    print(f"✅ Cleanup successful: {cleanup_result.get('deleted_count', 0)} files deleted")
+                else:
+                    print(f"⚠️ Cleanup failed or skipped: {cleanup_result.get('reason', 'unknown')}")
+            else:
+                final_summary["cleanup"] = {"cleaned": False, "reason": "no per-symbol files to clean"}
+                
         except Exception as e:
             error_msg = f"S3 put_object failed: {str(e)}"
             errors.append({"symbol": None, "error": error_msg})
@@ -264,6 +315,7 @@ def handler(event, context):
         warning_msg = "RESULTS_BUCKET env var is not set; skipping S3 upload"
         errors.append({"symbol": None, "error": warning_msg})
         print(f"WARNING: {warning_msg}")
+        final_summary["cleanup"] = {"cleaned": False, "reason": "S3 not configured"}
 
     print(f"Aggregator completed: {len(all_orders)} orders from {total_symbols_with_data}/{total_symbols_processed} symbols")
     return final_summary
