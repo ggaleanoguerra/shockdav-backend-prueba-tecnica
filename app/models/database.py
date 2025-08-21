@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, BigInteger, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, BigInteger, Float, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
@@ -52,18 +52,18 @@ class Order(Base):
     quote_volume = Column(String(50))
     
     # Campos de estado y configuración
-    status = Column(String(20))
-    side = Column(String(10))  # buy/sell
-    order_type = Column(String(20))  # market/limit
-    force = Column(String(10))  # gtc, ioc, etc.
+    status = Column(String(30))
+    side = Column(String(20))  # buy/sell/close_long/close_short
+    order_type = Column(String(30))  # market/limit
+    force = Column(String(20))  # gtc, ioc, etc.
     
     # Campos específicos de futuros
     leverage = Column(String(10))
-    margin_mode = Column(String(20))  # isolated/crossed
+    margin_mode = Column(String(30))  # isolated/crossed
     margin_coin = Column(String(20))
-    pos_side = Column(String(10))  # long/short
-    pos_mode = Column(String(20))  # hedge_mode/one_way_mode
-    trade_side = Column(String(20))  # open/close/sell_single/buy_single
+    pos_side = Column(String(20))  # long/short
+    pos_mode = Column(String(30))  # hedge_mode/one_way_mode
+    trade_side = Column(String(30))  # open/close/sell_single/buy_single/close_long/close_short
     reduce_only = Column(String(10))  # YES/NO
     pos_avg = Column(String(50))
     
@@ -73,8 +73,8 @@ class Order(Base):
     
     # Campos de origen y configuración
     client_oid = Column(String(50))
-    order_source = Column(String(20))
-    enter_point_source = Column(String(20))
+    order_source = Column(String(30))  # pos_loss_market, etc.
+    enter_point_source = Column(String(30))  # WEB, API, etc.
     preset_stop_surplus_price = Column(String(50))
     preset_stop_loss_price = Column(String(50))
     
@@ -107,11 +107,31 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def create_tables():
     """Crear todas las tablas en la base de datos"""
     try:
+        print("🔗 Intentando conectar a la base de datos...")
+        print(f"📍 URL: {DATABASE_URL[:50]}..." if DATABASE_URL else "❌ URL no configurada")
+        
         Base.metadata.create_all(bind=engine)
         print("✅ Tablas de base de datos creadas/verificadas correctamente")
+        
+        # Verificar conexión con una consulta simple
+        with engine.connect() as connection:
+            result = connection.execute(text("SELECT 1"))
+            print("✅ Conexión de prueba exitosa")
+        
         return True
     except Exception as e:
-        print(f"⚠️  No se pudo conectar a la base de datos: {str(e)}")
+        error_msg = str(e)
+        print(f"❌ No se pudo conectar a la base de datos: {error_msg}")
+        print(f"🔍 Tipo de error: {type(e).__name__}")
+        
+        # Diagnóstico específico de errores comunes
+        if "Access denied" in error_msg:
+            print("🔑 Error de autenticación - verifica usuario/contraseña")
+        elif "Can't connect to MySQL server" in error_msg:
+            print("🔌 Error de conexión - verifica que MySQL esté ejecutándose")
+        elif "Unknown database" in error_msg:
+            print("🗃️ Base de datos no existe - créala con CREATE DATABASE")
+        
         print("⚠️  La aplicación continuará funcionando en modo sin base de datos")
         return False
 
@@ -119,7 +139,10 @@ def get_db_session():
     """Obtener una sesión de base de datos"""
     try:
         session = SessionLocal()
+        # Verificar que la sesión funcione con una consulta simple
+        session.execute(text("SELECT 1"))
         return session
     except Exception as e:
-        print(f"⚠️  Error al crear sesión de base de datos: {str(e)}")
+        print(f"❌ Error al crear sesión de base de datos: {str(e)}")
+        print(f"🔍 Tipo de error: {type(e).__name__}")
         return None
