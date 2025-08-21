@@ -1335,18 +1335,3 @@ flowchart TD
 **Características**: Response Streaming, AWS Timing, Error Categorization, S3 Integration, Data Integrity, Ultra Performance, Circuit Breaker, Smart AI Pagination, Adaptive Request Sizing, Dynamic Timeout Management
 
 ---
-
-## 📈 Métricas y Performance
-
-### **Capacidades del Sistema**
-- ⚡ **Concurrencia**: Hasta 5 símbolos en paralelo (configurable) + paralelización interna
-- 📊 **Throughput**: ~1500+ órdenes procesadas en <90 segundos (3-5x más rápido)
-- 🔄 **Eficiencia**: Respuestas optimizadas <1KB vs datasets completos en S3
-- ⏱️ **Timing**: Medición precisa de componentes AWS con formato humano
-- 💾 **Persistencia**: 100% de órdenes guardadas via gestión híbrida S3+BD
-- 🛡️ **Tolerancia**: Categorización inteligente de errores sin pérdida de datos
-- 🔴 **Circuit Breaker**: Evita 40% tiempo perdido en símbolos problemáticos
-- 🧠 **Smart Pagination**: 20-40% menos requests innecesarios con AI
-- 📏 **Adaptive Sizing**: 10-30% mejor eficiencia según latencia de API
-- ⚡ **Paralelización**: 3-5x speedup con processing concurrente inteligente
-- 📦 **Batch Processing**: Máxima utilización de tiempo de ejecución disponible
